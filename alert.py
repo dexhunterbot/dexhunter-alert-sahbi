@@ -3,6 +3,7 @@ DexHunter big buy/sell alert -> Telegram (real-time)
 Kaychouf DexHunter kol POLL_SEC tanya, w ila chi wa7ed ba3 token b > MIN_ADA ADA, kaysift message f Telegram.
 """
 import json
+import math
 import os
 import sys
 import time
@@ -107,6 +108,33 @@ def fetch_since(since_ts, max_pages=15):
     return out
 
 
+DEBUG_DONE = [False]
+
+
+def num(v):
+    try:
+        return float(v)
+    except Exception:
+        return None
+
+
+def kfmt(x):
+    if x is None:
+        return "?"
+    for div, suf in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(x) >= div:
+            v = int(x / div * 10) / 10
+            return f"{v:g}{suf}"
+    return f"{x:,.0f}" if x >= 10 else f"{x:g}"
+
+
+def pfmt(p):
+    if p >= 1:
+        return f"{p:,.2f}"
+    d = -math.floor(math.log10(p)) + 2 if p > 0 else 2
+    return f"{p:.{d}f}"
+
+
 _names = {}
 
 
@@ -153,22 +181,31 @@ def process(orders, since, seen):
             continue
         seen.add(uid)
         tok = tin if kind == "sell" else tout
-        amt = g(o, "amount_in", "amountIn", default="?") if kind == "sell" else \
-            g(o, "actual_out_amount", "amount_out", "expected_out_amount", default="?")
-        try:
-            amt = f"{float(amt):,.0f}"
-        except Exception:
-            pass
+        qty = num(g(o, "amount_in", "amountIn") if kind == "sell" else
+                  g(o, "actual_out_amount", "amount_out", "expected_out_amount"))
         name = token_name(tok)
-        when = datetime.fromtimestamp(ts, timezone.utc).strftime("%H:%M UTC") if ts else "?"
-        link = f'\n<a href="https://cardanoscan.io/transaction/{tx}">Chouf transaction</a>' if len(str(tx)) == 64 else ""
-        head = "🔴 <b>BIG SELL</b>" if kind == "sell" else "🟢 <b>BIG BUY</b>"
-        verb = "Tba3" if kind == "sell" else "Chra"
-        tg(f"{head} f DexHunter\n"
-           f"Token: <b>{name}</b>\n"
-           f"{verb}: {amt} {name}\n"
-           f"Qima: <b>{ada:,.0f} ADA</b>\n"
-           f"Wqt: {when}{link}")
+        price = (ada / qty) if qty else None
+        impact = num(g(o, "price_impact", "priceImpact", "impact"))
+        if impact is not None and abs(impact) < 1:
+            impact *= 100  # ila ja b 0.023 -> 2.3%
+        if kind == "sell":
+            lines = [f"\U0001F534 <b>BIG SELL {name} {kfmt(ada)} ADA</b>"]
+        else:
+            lines = [f"\U0001F7E2 <b>BIG BUY {name} {kfmt(ada)} ADA</b>"]
+        lines.append(f"\U0001F4B0 Price: {pfmt(price)} ADA" if price else "\U0001F4B0 Price: ?")
+        lines.append(f"\U0001F4E6 {kfmt(qty)} {name}" if qty else f"\U0001F4E6 ? {name}")
+        if impact is not None:
+            sign = "-" if kind == "sell" else "+"
+            arrow = "\U0001F4C9" if kind == "sell" else "\U0001F4C8"
+            lines.append(f"{arrow} Impact: {sign}{abs(impact):.2f}%")
+        links = [f'<a href="https://app.dexhunter.io/swap?tokenIdSell=&tokenIdBuy={tok}">DexHunter</a>']
+        if len(str(tx)) == 64:
+            links.append(f'<a href="https://cardanoscan.io/transaction/{tx}">Transaction</a>')
+        lines.append("\U0001F517 " + " · ".join(links))
+        if not DEBUG_DONE[0]:
+            DEBUG_DONE[0] = True
+            print("DEBUG ORDER:", json.dumps(o)[:1500])
+        tg("\n".join(lines))
         alerts += 1
     return alerts
 
