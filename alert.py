@@ -135,6 +135,47 @@ def pfmt(p):
     return f"{p:.{d}f}"
 
 
+_pools = {}
+
+
+def pool_ada(tid):
+    """Ch7al dyal ADA kayn f ga3 l'pools dyal had token (daba)."""
+    c = _pools.get(tid)
+    if c and time.time() - c[0] < 30:
+        return c[1]
+    total = 0.0
+    for url, hdr in ((f"{API}/stats/pools/ADA/{tid}", H), (f"https://dhapi.io/stats/pools/ADA/{tid}", {})):
+        try:
+            r = requests.get(url, headers=hdr, timeout=15)
+            if r.ok and isinstance(r.json(), list):
+                for p in r.json():
+                    if p.get("pool_id"):
+                        total += num(p.get("token_1_amount")) or 0
+                break
+        except Exception:
+            pass
+    _pools[tid] = (time.time(), total)
+    return total or None
+
+
+def price_move(kind, ada, tok, o):
+    """Ch7al 7rrek had swap l'prix b % (taqriban, b l'pools)."""
+    v = num(g(o, "price_impact", "priceImpact", "impact"))
+    if v is not None:
+        return abs(v * 100 if abs(v) < 1 else v)
+    R = pool_ada(tok)
+    if not R or not ada:
+        return None
+    if kind == "buy":
+        before = max(R - ada, R * 0.05)
+        return min(((R / before) ** 2 - 1) * 100, 999)
+    before = R + ada
+    return (1 - (R / before) ** 2) * 100
+
+
+BIG_MOVE = float(os.environ.get("BIG_MOVE_PCT", "10"))
+
+
 _names = {}
 
 
@@ -185,13 +226,14 @@ def process(orders, since, seen):
                   g(o, "actual_out_amount", "amount_out", "expected_out_amount"))
         name = token_name(tok)
         price = (ada / qty) if qty else None
-        impact = num(g(o, "price_impact", "priceImpact", "impact"))
-        if impact is not None and abs(impact) < 1:
-            impact *= 100  # ila ja b 0.023 -> 2.3%
+        impact = price_move(kind, ada, tok, o)
+        big = impact is not None and impact >= BIG_MOVE
         if kind == "sell":
-            lines = [f"\U0001F534 <b>BIG SELL {name} {kfmt(ada)} ADA</b>"]
+            icon = "\U0001F7E8" if big else "\U0001F534"
+            lines = [f"{icon} <b>BIG SELL {name} {kfmt(ada)} ADA</b>"]
         else:
-            lines = [f"\U0001F7E2 <b>BIG BUY {name} {kfmt(ada)} ADA</b>"]
+            icon = "\U0001F7E8" if big else "\U0001F7E2"
+            lines = [f"{icon} <b>BIG BUY {name} {kfmt(ada)} ADA</b>"]
         lines.append(f"\U0001F4B0 Price: {pfmt(price)} ADA" if price else "\U0001F4B0 Price: ?")
         lines.append(f"\U0001F4E6 {kfmt(qty)} {name}" if qty else f"\U0001F4E6 ? {name}")
         if impact is not None:
