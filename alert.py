@@ -38,7 +38,8 @@ BIG_MOVE = float(os.environ.get("BIG_MOVE_PCT", "10"))
 CLUSTER_N = int(os.environ.get("CLUSTER_N", "3"))
 CLUSTER_MIN = int(os.environ.get("CLUSTER_MIN", "10"))
 STREAK_N = int(os.environ.get("STREAK_N", "5"))
-STREAK_GAP_MIN = int(os.environ.get("STREAK_GAP_MIN", "60"))
+STREAK_GAP_MIN = int(os.environ.get("STREAK_GAP_MIN", "10"))
+STREAK_COOLDOWN_MIN = int(os.environ.get("STREAK_COOLDOWN_MIN", "30"))
 WALLET_STEP = float(os.environ.get("STEP_PCT", "10"))
 WALLET_EVERY = int(os.environ.get("WALLET_EVERY_SEC", "120"))
 WALLET_MIN_VALUE = float(os.environ.get("MIN_VALUE_ADA", "20"))
@@ -413,8 +414,12 @@ def check_cluster(tid, name, ts, ada, info):
         tg("\n".join(lines))
 
 
-def check_streak(tid, name, kind, ts, ada, info):
-    """5 big buys (wla sells) mtab3in f nafs token, bla l3aks binathom."""
+streak_seen = set()
+streak_sent = {}  # tid -> ts
+
+
+def check_streak(tid, kind, ts, ada, quiet):
+    """5 buys (wla 5 sells) mtab3in f nafs token, ay 7jm, bla l3aks binathom."""
     sk = state.setdefault("streaks", {})
     st = sk.get(tid)
     if not st or st["kind"] != kind or ts - st["last"] > STREAK_GAP_MIN * 60:
@@ -422,13 +427,17 @@ def check_streak(tid, name, kind, ts, ada, info):
     st["n"] += 1
     st["ada"] += ada
     st["last"] = ts
-    if st["n"] >= STREAK_N and st["n"] % STREAK_N == 0:
-        mins_ = max(1, int((st["last"] - st["first"]) / 60))
+    if st["n"] == STREAK_N and not quiet and time.time() - streak_sent.get(tid, 0) > STREAK_COOLDOWN_MIN * 60:
+        streak_sent[tid] = time.time()
+        name = token_name(tid)
+        info = dex1(tid)
+        secs = int(st["last"] - st["first"])
+        dur = f"{secs // 60} min" if secs >= 60 else f"{max(secs, 1)} s"
         if kind == "buy":
-            head = f"\U0001F680\U0001F7E2 <b>{name}: {st['n']} big buys mtab3in</b>"
+            head = f"\U0001F680\U0001F7E2 <b>{name}: {st['n']} buys mtab3in</b>"
         else:
-            head = f"\U0001F6A8\U0001F534 <b>{name}: {st['n']} big sells mtab3in</b>"
-        lines = [head, f"\U0001F4B5 Total: {kfmt(st['ada'])} ADA f {mins_} min"]
+            head = f"\U0001F6A8\U0001F534 <b>{name}: {st['n']} sells mtab3in</b>"
+        lines = [head, f"\U0001F4B5 Total: {kfmt(st['ada'])} ADA f {dur}"]
         if info and info.get("mcap_ada"):
             lines.append(f"\U0001F4CA MCAP: {kfmt(info['mcap_ada'])} ADA")
         lines.append("\U0001F517 " + links(tid, info))
@@ -445,12 +454,13 @@ def links(tid, info, tx=None):
     return " · ".join(out)
 
 
-def process(orders, since, seen):
+def process(orders, since, seen, quiet=False):
     alerts = 0
     lim = mins()
     dmin = default_min()
     low = min([dmin] + list(lim.values()))
     events = []
+    all_tr = []
     for o in orders:
         tin = g(o, "token_id_in", "tokenIdIn", "token_in", default="")
         tout = g(o, "token_id_out", "tokenIdOut", "token_out", default="")
@@ -465,10 +475,13 @@ def process(orders, since, seen):
         ts = to_ts(g(o, *TS_FIELDS))
         if ts and ts < since:
             continue
-        if ada < low:
-            continue
         tx = g(o, "tx_hash", "txHash", "_id", "id", default="")
         uid = str(tx or json.dumps(o, sort_keys=True))
+        if uid not in streak_seen:
+            streak_seen.add(uid)
+            all_tr.append((ts or time.time(), tin if kind == "sell" else tout, kind, ada))
+        if ada < low:
+            continue
         if uid in seen:
             continue
         tok = tin if kind == "sell" else tout
@@ -509,7 +522,11 @@ def process(orders, since, seen):
     for ts, tok, name, kind, ada, info in sorted(events, key=lambda e: e[0]):
         if kind == "buy":
             check_cluster(tok, name, ts, ada, info)
-        check_streak(tok, name, kind, ts, ada, info)
+    # ay buy/sell (ay 7jm) l'streaks
+    for ts, tok, kind, ada in sorted(all_tr, key=lambda e: e[0]):
+        check_streak(tok, kind, ts, ada, quiet)
+    if len(streak_seen) > 50000:
+        streak_seen.clear()
     return alerts
 
 
@@ -837,6 +854,7 @@ def main():
         print("Khass DEXHUNTER_KEY, TG_TOKEN w TG_CHAT_ID f GitHub Secrets.")
         sys.exit(1)
     load_state()
+    state["streaks"] = {}  # kat3awd tbna mn l'lookback
     seen = set()
     try:
         seen = set(json.load(open(SEEN_FILE)))
@@ -852,7 +870,7 @@ def main():
         loop_start = time.time()
         try:
             orders = fetch_since(since)
-            a = process(orders, since, seen)
+            a = process(orders, since, seen, quiet=(checks == 0))
         except Exception as e:
             print("Process error:", e)
             orders, a = [], 0
