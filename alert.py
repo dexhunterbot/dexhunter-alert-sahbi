@@ -37,6 +37,8 @@ LOOKBACK_MIN = int(os.environ.get("LOOKBACK_MIN", "75"))
 BIG_MOVE = float(os.environ.get("BIG_MOVE_PCT", "10"))
 CLUSTER_N = int(os.environ.get("CLUSTER_N", "3"))
 CLUSTER_MIN = int(os.environ.get("CLUSTER_MIN", "10"))
+STREAK_N = int(os.environ.get("STREAK_N", "5"))
+STREAK_GAP_MIN = int(os.environ.get("STREAK_GAP_MIN", "60"))
 WALLET_STEP = float(os.environ.get("STEP_PCT", "10"))
 WALLET_EVERY = int(os.environ.get("WALLET_EVERY_SEC", "120"))
 WALLET_MIN_VALUE = float(os.environ.get("MIN_VALUE_ADA", "20"))
@@ -411,6 +413,28 @@ def check_cluster(tid, name, ts, ada, info):
         tg("\n".join(lines))
 
 
+def check_streak(tid, name, kind, ts, ada, info):
+    """5 big buys (wla sells) mtab3in f nafs token, bla l3aks binathom."""
+    sk = state.setdefault("streaks", {})
+    st = sk.get(tid)
+    if not st or st["kind"] != kind or ts - st["last"] > STREAK_GAP_MIN * 60:
+        st = sk[tid] = {"kind": kind, "n": 0, "ada": 0.0, "first": ts, "last": ts}
+    st["n"] += 1
+    st["ada"] += ada
+    st["last"] = ts
+    if st["n"] >= STREAK_N and st["n"] % STREAK_N == 0:
+        mins_ = max(1, int((st["last"] - st["first"]) / 60))
+        if kind == "buy":
+            head = f"\U0001F680\U0001F7E2 <b>{name}: {st['n']} big buys mtab3in</b>"
+        else:
+            head = f"\U0001F6A8\U0001F534 <b>{name}: {st['n']} big sells mtab3in</b>"
+        lines = [head, f"\U0001F4B5 Total: {kfmt(st['ada'])} ADA f {mins_} min"]
+        if info and info.get("mcap_ada"):
+            lines.append(f"\U0001F4CA MCAP: {kfmt(info['mcap_ada'])} ADA")
+        lines.append("\U0001F517 " + links(tid, info))
+        tg("\n".join(lines))
+
+
 def links(tid, info, tx=None):
     out = []
     if info and info.get("url"):
@@ -426,6 +450,7 @@ def process(orders, since, seen):
     lim = mins()
     dmin = default_min()
     low = min([dmin] + list(lim.values()))
+    events = []
     for o in orders:
         tin = g(o, "token_id_in", "tokenIdIn", "token_in", default="")
         tout = g(o, "token_id_out", "tokenIdOut", "token_out", default="")
@@ -479,8 +504,12 @@ def process(orders, since, seen):
         d = day_rec()["trades"].setdefault(tok, {"n": name, "buy": 0, "sell": 0, "nb": 0, "ns": 0})
         d["buy" if kind == "buy" else "sell"] += ada
         d["nb" if kind == "buy" else "ns"] += 1
+        events.append((ts or time.time(), tok, name, kind, ada, info))
+    # b tartib dyal l'wa9t (l9dim 9bel)
+    for ts, tok, name, kind, ada, info in sorted(events, key=lambda e: e[0]):
         if kind == "buy":
-            check_cluster(tok, name, ts or time.time(), ada, info)
+            check_cluster(tok, name, ts, ada, info)
+        check_streak(tok, name, kind, ts, ada, info)
     return alerts
 
 
