@@ -38,7 +38,7 @@ BIG_MOVE = float(os.environ.get("BIG_MOVE_PCT", "10"))
 CLUSTER_N = int(os.environ.get("CLUSTER_N", "3"))
 CLUSTER_MIN = int(os.environ.get("CLUSTER_MIN", "10"))
 STREAK_N = int(os.environ.get("STREAK_N", "5"))
-STREAK_GAP_MIN = int(os.environ.get("STREAK_GAP_MIN", "10"))
+STREAK_WINDOW_SEC = int(os.environ.get("STREAK_WINDOW_SEC", "120"))
 STREAK_COOLDOWN_MIN = int(os.environ.get("STREAK_COOLDOWN_MIN", "30"))
 WALLET_STEP = float(os.environ.get("STEP_PCT", "10"))
 WALLET_EVERY = int(os.environ.get("WALLET_EVERY_SEC", "120"))
@@ -419,25 +419,27 @@ streak_sent = {}  # tid -> ts
 
 
 def check_streak(tid, kind, ts, ada, quiet):
-    """5 buys (wla 5 sells) mtab3in f nafs token, ay 7jm, bla l3aks binathom."""
+    """5 buys (wla 5 sells) mtab3in f nafs token f 9el mn STREAK_WINDOW_SEC, ay 7jm."""
     sk = state.setdefault("streaks", {})
     st = sk.get(tid)
-    if not st or st["kind"] != kind or ts - st["last"] > STREAK_GAP_MIN * 60:
-        st = sk[tid] = {"kind": kind, "n": 0, "ada": 0.0, "first": ts, "last": ts}
-    st["n"] += 1
-    st["ada"] += ada
-    st["last"] = ts
-    if st["n"] == STREAK_N and not quiet and time.time() - streak_sent.get(tid, 0) > STREAK_COOLDOWN_MIN * 60:
+    if not st or st["kind"] != kind:
+        st = sk[tid] = {"kind": kind, "tr": []}
+    st["tr"].append([ts, ada])
+    st["tr"] = st["tr"][-STREAK_N:]
+    tr = st["tr"]
+    if (len(tr) == STREAK_N and tr[-1][0] - tr[0][0] <= STREAK_WINDOW_SEC and not quiet
+            and time.time() - streak_sent.get(tid, 0) > STREAK_COOLDOWN_MIN * 60):
         streak_sent[tid] = time.time()
         name = token_name(tid)
         info = dex1(tid)
-        secs = int(st["last"] - st["first"])
-        dur = f"{secs // 60} min" if secs >= 60 else f"{max(secs, 1)} s"
+        secs = int(tr[-1][0] - tr[0][0])
+        dur = f"{secs // 60} min {secs % 60} s" if secs >= 60 else f"{max(secs, 1)} s"
+        total = sum(x[1] for x in tr)
         if kind == "buy":
-            head = f"\U0001F680\U0001F7E2 <b>{name}: {st['n']} buys mtab3in</b>"
+            head = f"\U0001F680\U0001F7E2 <b>{name}: {STREAK_N} buys mtab3in f {dur}</b>"
         else:
-            head = f"\U0001F6A8\U0001F534 <b>{name}: {st['n']} sells mtab3in</b>"
-        lines = [head, f"\U0001F4B5 Total: {kfmt(st['ada'])} ADA f {dur}"]
+            head = f"\U0001F6A8\U0001F534 <b>{name}: {STREAK_N} sells mtab3in f {dur}</b>"
+        lines = [head, f"\U0001F4B5 Total: {kfmt(total)} ADA"]
         if info and info.get("mcap_ada"):
             lines.append(f"\U0001F4CA MCAP: {kfmt(info['mcap_ada'])} ADA")
         lines.append("\U0001F517 " + links(tid, info))
